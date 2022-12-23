@@ -42,7 +42,7 @@ public class BlogController {
         // 返回id
         return Result.ok(blog.getId());
     }
-//尝试修改使用一下git  djalsdja
+
     @PutMapping("/like/{id}")
     public Result likeBlog(@PathVariable("id") Long id) {
         // 修改点赞数量
