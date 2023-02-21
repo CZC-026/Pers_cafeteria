@@ -8,6 +8,7 @@ import com.hmdp.entity.Shop;
 import com.hmdp.mapper.ShopMapper;
 import com.hmdp.service.IShopService;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.hmdp.utils.CacheClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -15,10 +16,10 @@ import org.springframework.stereotype.Service;
 import com.hmdp.utils.RedisConstants;
 import org.springframework.transaction.annotation.Transactional;
 
+import javax.annotation.Resource;
 import java.util.concurrent.TimeUnit;
 
-import static com.hmdp.utils.RedisConstants.CACHE_SHOP_KEY;
-import static com.hmdp.utils.RedisConstants.CACHE_SHOP_TTL;
+import static com.hmdp.utils.RedisConstants.*;
 
 /**
  * <p>
@@ -30,32 +31,31 @@ import static com.hmdp.utils.RedisConstants.CACHE_SHOP_TTL;
  */
 @Service
 public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IShopService {
+    @Resource
+    private CacheClient cacheClient;
 
     @Autowired
     private StringRedisTemplate stringRedisTemplate;
 
     @Override
-    public Result queryShopById(Long id) {
-        //1.去redis中查询缓存
-        String key = RedisConstants.CACHE_SHOP_KEY + id;
-        String shopJson = stringRedisTemplate.opsForValue().get(id);
-        if(StrUtil.isNotBlank(shopJson)){
-        //2.redis中有则直接返回
-            Shop shop = JSONUtil.toBean(shopJson, Shop.class);
-            return Result.ok(shop);
-        }
-//        Shop shop = getById(id);
+    public Result queryById(Long id) {
+        // 解决缓存穿透
+        Shop shop = cacheClient
+                .queryWithPassThrough(CACHE_SHOP_KEY, id, Shop.class, this::getById, CACHE_SHOP_TTL, TimeUnit.MINUTES);
 
-        //3.redis中无则去mysql中查询
-        Shop shop = query().eq("id", id).one();
+        // 互斥锁解决缓存击穿
+        // Shop shop = cacheClient
+        //         .queryWithMutex(CACHE_SHOP_KEY, id, Shop.class, this::getById, CACHE_SHOP_TTL, TimeUnit.MINUTES);
+
+        // 逻辑过期解决缓存击穿
+        // Shop shop = cacheClient
+        //         .queryWithLogicalExpire(CACHE_SHOP_KEY, id, Shop.class, this::getById, 20L, TimeUnit.SECONDS);
+
         if (shop == null) {
-            //4.mysql中无报错
-            return Result.fail("没有符合条件的店铺的信息");
+            return Result.fail("店铺不存在！");
         }
-        //5.mysql中有则先写入redis，再返回
-        stringRedisTemplate.opsForValue().set("cache:shop" + id,JSONUtil.toJsonPrettyStr(shop),CACHE_SHOP_TTL, TimeUnit.MINUTES);
+        // 7.返回
         return Result.ok(shop);
-
     }
 
     @Override
